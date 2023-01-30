@@ -12,15 +12,413 @@
 
 
 <body>
+    
+    <?php
+// shell_exec("python python.py");
+?>
+<?php
+include 'config.php';
+session_start();
+$email = $_SESSION['email'];
+$now = time();
+$todaydate = date("n/j/Y", $now);
+$selectEvent = mysqli_query($conn, "SELECT * FROM event");
+if (mysqli_num_rows($selectEvent) > 0) {
+    $fetchDate = mysqli_fetch_assoc($selectEvent);
+}
+$selectDateEvent = mysqli_query($conn, "SELECT date FROM event");
+while ($row = mysqli_fetch_array($selectDateEvent)) {
+    $stringDate = $row[0];
+    $eventtoInt = strtotime($stringDate);
+    $todaytoInt = strtotime($todaydate);
+    if ($eventtoInt < $todaytoInt) {
+        $deleteEvent = mysqli_query($conn, "DELETE FROM `event` WHERE date = '$stringDate'");
+    }
+}
+
+$selectIdEvent = mysqli_query($conn, "SELECT * FROM event WHERE id > 0");
+if (mysqli_num_rows($selectIdEvent) > 0) {
+    $fetchId = mysqli_fetch_assoc($selectIdEvent);
+}
+
+$selectUser = mysqli_query($conn, "SELECT * FROM `user` WHERE email = '$email'") or die('query failed');
+if (mysqli_num_rows($selectUser) > 0) {
+    $fetchUser = mysqli_fetch_assoc($selectUser);
+}
+$selectActivity = mysqli_query($conn, "SELECT date_of_adding FROM `activity` WHERE email = '$email' ORDER BY date_of_adding desc") or die('query failed');
+$fetchActivity = "";
+while ($row = mysqli_fetch_array($selectActivity)) {
+    if (!empty($row)) {
+        $fetchActivity = $row[0];
+        break;
+    } else {
+        $fetchActivity = '';
+    }
+}
+
+if (isset($_POST['add'])) {
+    $username = $fetchUser['name'];
+    $title = $_POST['title'];
+    $category = $_POST['category'];
+    $location = $_POST['location'];
+    $date = $_POST['date'];
+    $description = $_POST['desc'];
+
+    // current time in (n/j/Y) format 
+    $todaydate = date("n/j/Y", $now); // STRING
+    $todaydatetoDate = strtotime($todaydate); // INTEGER
+
+    // user date
+    $formatdate = date("n/j/Y", strtotime($date)); // STRING - format the date that came from user input which will be placed into event table
+    $formatdatetoDate = strtotime($formatdate); // INTEGER - the date is converted into datetime type 
+
+    // current time in (Y-m-d h:i:s) format
+    $currentDate = date('Y-m-d h:i:s', $now); // String - time of adding event time
+    $currentDatetoDate = strtotime($currentDate); // INTEGER - the date is converted into datetime type 
+
+    // from user actitivity
+    $date_of_adding = $fetchActivity; // date of last event was added which is that the last current time value was stored in activity table
+    $date_of_addingtoDate = strtotime($date_of_adding); // INTEGER - the date is converted into datetime type 
+
+    // DB Queries
+    $eventInsertQuery = "INSERT INTO `event`(`title`, `category`, `location`, `date`, `time`, `description`) 
+    VALUES ('$title','$category','$location','$formatdate', '8:00 PM', '$description')";
+    $activityInsertQuery = "INSERT INTO `activity`(`username`, `email`, `activity_name`, `date_of_adding`) 
+    VALUES ('$username', '$email','$title','$currentDate')";
+
+    // calculate the diifer between two integer dates 
+    function diffInDays($currentDate, $targetDate)
+    {
+        $datediff = ($currentDate - $targetDate);
+        return ($datediff / 86400);
+    }
+
+    // Check for the conflicts between the input date with the others in event table in row[date]
+    function conflictChecker($connector, $insertEvent, $InsertActivity, $selecter, $eventDate)
+    {
+        $matching = 0;
+        // check the date over all rows in the event table, where is there is a match we will increment by 1
+        try {
+            while ($row = mysqli_fetch_array($selecter)) {
+                if ($row['date'] == $eventDate) {
+                    $matching += 1;
+                }
+            }
+            // After cheking we will insert the data if there is 0 matching dates with the input date in the table
+            if ($matching == 0) {
+                mysqli_query($connector, $insertEvent);
+                mysqli_query($connector, $InsertActivity); // add to user activity table
+            } else {
+                echo "Dear student you are not allowed to make the event, there is conflict!";
+            }
+        } catch (Exception $err) {
+            echo $err;
+        }
+    }
+
+    // must the all fields are filled
+    if ((!empty($title)) && (!empty($category)) && (!empty($location)) && (!empty($formatdate)) && (!empty($description))) {
+        // getting the difference between current date and user input to check if the date is passed or not!
+        $prevDays = diffInDays($todaydatetoDate, $formatdatetoDate);
+        if ($prevDays <= 0) {
+            // When it is available date we will ensure if the date of adding by user is more than 1 day for scalability porpuses 
+            if (!empty($date_of_adding)) {
+                // Here we will ensure if the last adding by the user is acceed one single day
+                $difference = diffInDays($currentDatetoDate, $date_of_addingtoDate);
+                if ($difference >= 1) {
+                    // We will call the conflict checker method to make sure if there is no conflict event by dates to make insert the data in DB
+                    $conflictResult = conflictChecker($conn, $eventInsertQuery, $activityInsertQuery, $selectEvent, $formatdate);
+                } else {
+                    echo "Dear student you are not allowed to make the event, you need to wait 24 hours elapsed from the last one you added!";
+                }
+            }
+            // When the user is add an event for first time
+            else {
+                $conflictResult = conflictChecker($conn, $eventInsertQuery, $activityInsertQuery, $selectEvent, $formatdate);
+            }
+        } else {
+            echo "It is earlier date";
+        }
+    } else {
+        echo "You must fill all the fields";
+    }
+}
+?>
+<?php
+if (isset($_POST['subscribe'])) {
+    $id = $_POST['subscribe']; // id value in string
+    $result = mysqli_query($conn, "SELECT * FROM event");
+    try {
+        while ($row = mysqli_fetch_array($result)) {
+            if ($row['id'] == $id) {
+                $event_name = $row['title'];
+                $event_category = $row['category'];
+                $event_location = $row['location'];
+                $event_appointment = $row['date'] . " " . $row['time'];
+                $event_description = $row['description'];
+                $subscribeQuery = "INSERT INTO `subscription`(`user_email`, `event_id`, `event_name`, `event_category`, `event_location`, `event_appointment`, `event_description`) 
+            VALUES ('$email','$id','$event_name','$event_category','$event_location','$event_appointment','$event_description')";
+                $subscribe = mysqli_query($conn,  $subscribeQuery);
+                header("Location:eventPage.php");
+                exit;
+            }
+        }
+    } catch (Exception $err) {
+    }
+}
+?>
+
+<?php
+if (isset($_POST['unsubscribe'])) {
+    $id = $_POST['unsubscribe']; // event id value in string
+    $unsubscribeQuery = "DELETE FROM subscription WHERE user_email = '$email' AND event_id = '$id'";
+    $unsubscribe = mysqli_query($conn,  $unsubscribeQuery);
+    header("Location:eventPage.php");
+    exit;
+}
+?>
+
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        h1 {
+            font-size: 20px;
+            font-weight: 700;
+            color: rgb(104, 34, 34);
+            text-align: center;
+            text-transform: capitalize;
+        }
+
+        input,
+        textarea {
+            padding: 10px;
+            outline: 0;
+            border: 1px solid white;
+            background: rgb(200, 200, 200);
+            font-size: 15px;
+            width: 100%;
+        }
+
+        .item1 {
+            grid-area: left;
+        }
+
+        .item2 {
+            grid-area: right;
+        }
+
+        .item3 {
+            grid-area: bottom;
+        }
+
+        .flex {
+            display: grid;
+            grid-template-areas: 'left left left right right right'
+                'bottom bottom bottom bottom bottom bottom';
+            gap: 10px;
+            padding: 10px;
+        }
+
+        .flex>div {
+            padding: 20px 0;
+        }
+
+        tr {
+            width: 100%;
+            background-color: #fafafa;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        tr:nth-child(even) {
+            background-color: #eeeeee;
+        }
+
+        */ textarea {
+            resize: none;
+        }
+
+        .addBtn {
+            background: rgb(145, 48, 48);
+            color: white;
+            text-transform: capitalize;
+            font-size: 17px;
+            cursor: pointer;
+        }
+
+        .resetBtn {
+            text-transform: capitalize;
+            font-size: 17px;
+            cursor: pointer;
+        }
+
+        .addBtn:hover {
+            background: rgb(104, 34, 34);
+            color: #fff;
+        }
+    </style>
+
+    <title>iEventer - Event</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/css/bootstrap.min.css" integrity="sha384-GJzZqFGwb1QTTN6wy59ffF1BuGJpLSa9DkKMp0DgiMDm4iYMj70gZWKYbI706tWS" crossorigin="anonymous">
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.6/umd/popper.min.js" integrity="sha384-wHAiFfRlMFy6i5SRaxvfOCifBUQy1xHdJ/yoi7FRNXMRBu5WHdZYu1hA6ZOblgut" crossorigin="anonymous"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/js/bootstrap.min.js" integrity="sha384-B0UglyR+jN6CkvvICOB2joaf5I4l3gm9GU6Hc1og6Ls7i6U/mkkaduKaBhlAXv9k" crossorigin="anonymous"></script>
+    <script src="http://code.jquery.com/jquery-3.3.1.min.js" integrity="sha256-FgpCb/KJQlLNfOu91ta32o/NMZxltwRo8QtmkMRdAu8=" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.10.19/css/jquery.dataTables.min.css">
+    <script src="https://cdn.datatables.net/1.10.19/js/jquery.dataTables.min.js"></script>
+
+</head>
+
+
+<body>
     <header>
         <a href="#" class="logo">iEventer</a>
+        <nav class="navigation">
+            <a href="eventPage.php">Events</a>
+            <a href="forumPage.php">Forums</a>
+            <a href="meetingPage.php">Meetings</a>
+        </nav>
+        <img src="<?php echo $fetchUser['image']; ?>" id="user_pic" onclick="toggleMenu()">
+        <div class="sub-menu_wrap" id="subMenu">
+            <div class="sub-menu">
+                <div class="user_info">
+                    <h3><?php echo $fetchUser['name']; ?></h3>
+                </div>
+                <hr>
+                <a href="iEventer.php" class="sub-menu_link">
+                    <img src="images/home.png">
+                    <p>Home</p>
+                    <span>></span>
+                </a>
+                <a href="profile.php" class="sub-menu_link">
+                    <img src="images/profile.png">
+                    <p>Edit profile</p>
+                    <span>></span>
+                </a>
+                <a href="logout.php" class="sub-menu_link">
+                    <img src="images/logout.png">
+                    <p class="outBtn">Logout</p>
+                    <span>></span>
+                </a>
+            </div>
+        </div>
     </header>
-    <section class="inProgress">
-        <div style="margin-top:200px; font-size: 50px;
-        font-weight: 700;
-        color: rgb(104, 34, 34);
-        text-align: center">Events section</div>
+    <section>
+        <div>
+            <form method="POST" name="makeEvent" id="eventForm">
+                <h1 style="font-size: 20px; font-weight: 700; color: rgb(104, 34, 34); text-align: center">Make event</h1>
+                <br>
+                <div class="flex">
+                    <div class="item1">
+                        <input placeholder="Write title" type="text" name="title"><br>
+                        <input placeholder="Write category" type="text" name="category">
+                    </div>
+                    <div class="item2">
+                        <input placeholder="Write date" type="date" name="date"><br>
+                        <input placeholder="Write location" type="text" name="location">
+                    </div>
+                    <div class="item3">
+                        <textarea placeholder="Write brief description within 200 letters" name="desc" cols="10" rows="5"></textarea>
+                    </div>
+                    <input type="submit" class="addBtn" id="add" name="add" value="Add event">
+                    <input type="button" class="resetBtn" name="reset" value="Reset" onclick="resetFields();">
+                </div>
+            </form>
+        </div>
     </section>
+    <section>
+        <div class="container">
+            <h1>Event list</h1>
+            <?php
+            echo "<table class='table table-fluid' id='myTable'>;
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Title</th>
+                        <th>Category</th>
+                        <th>Location</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Description</th>
+                        <th></th>
+                    </tr>
+                </thead>";
+            $eventList = mysqli_query($conn, "SELECT * FROM event");
+            while ($row = mysqli_fetch_array($eventList)) {
+                $idt = $row[0];
+                $titlet = $row[1];
+                $categoryt = $row[2];
+                $locationt = $row[3];
+                $datet = $row[4];
+                $timet = $row[5];
+                $desct = $row[6];
+
+                echo "<tbody>
+                        <tr>
+                            <td>" . $idt . "</td>
+                            <td>" . $titlet . "</td>
+                            <td>" . $categoryt . "</td>
+                            <td>" . $locationt . "</td>
+                            <td>" . $datet . "</td>
+                            <td>" . $timet . "</td>
+                            <td>" . $desct . "</td>
+                            <td>
+                                <form method='POST' name='subscription' id='eventForm'>";
+
+                $subsList = mysqli_query($conn, "SELECT event_id FROM subscription WHERE user_email = '$email'");
+                $matching = 0;
+                while ($row2 =  mysqli_fetch_array($subsList)) {
+                    if ($row2['event_id'] == $idt) {
+                        $matching++;
+                    }
+                }
+                if ($matching == 0) {
+            ?>
+                    <button type='submit' name='subscribe' value="<?php echo $row['id']; ?>">SUBSCRIBE</button>
+            <?php
+                } else {
+                    ?>
+                     <button type='submit' name='unsubscribe' value="<?php echo $row['id']; ?>">UNSUBSCRIBE</button>
+                    <?php
+                }
+                echo "</form>
+                            </td>
+                        </tr>
+                 </tbody>";
+            }
+            echo "</table>";
+            ?>
+        </div>
+    </section>
+    <footer class="footer">
+        <p class="footer-title"><span>Copyrights @ </span>Mohammed Aljabarti and Shadi Basudan</p>
+    </footer>
+    <script>
+        $(document).ready(function() {
+            $('#myTable').DataTable();
+        });
+    </script>
 </body>
+
+<script>
+    let subMenu = document.getElementById("subMenu");
+
+    function toggleMenu() {
+        subMenu.classList.toggle("open-menu");
+    }
+</script>
+
+</html>
+    
+    
+    </body>
 
 </html>
